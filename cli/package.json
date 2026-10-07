@@ -1,0 +1,39 @@
+{
+  "name": "relay-agents",
+  "version": "1.0.0",
+  "description": "Launch coding agents so Relay can see and answer them",
+  "bin": {
+    "relay": "relay.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1"
+  },
+  "files": [
+    "relay.js",
+    "integrations/"
+  ],
+  "author": "OnlyTerp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OnlyTerp/relay",
+    "directory": "cli"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "claude-code",
+    "codex",
+    "omp",
+    "grok",
+    "opencode",
+    "cli"
+  ]
+}

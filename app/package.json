@@ -1,0 +1,58 @@
+{
+  "name": "relay-desktop",
+  "productName": "Relay",
+  "version": "1.0.0",
+  "description": "Never keep an agent waiting. Edge dock for Claude Code, Codex and OpenCode on Windows.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "hub": "node hub.js",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "uiohook-napi": "^1.5.4",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.relay.desktop",
+    "productName": "Relay",
+    "files": [
+      "main.js",
+      "preload.js",
+      "hub.js",
+      "ui/**",
+      "node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../cli",
+        "to": "cli",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "ui/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    },
+    "publish": null
+  },
+  "author": "OnlyTerp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OnlyTerp/relay"
+  }
+}

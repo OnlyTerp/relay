@@ -1,0 +1,68 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Relay dock</title><link rel="stylesheet" href="style.css">
+<style>
+html,body{background:#0d0d0d!important;overflow:hidden;margin:0}
+#dock{position:absolute;top:0;width:56px;display:flex;flex-direction:column;align-items:center;gap:9px;padding:6px 0}
+body.right #dock{left:0;padding-right:6px}
+body.left #dock{right:0;padding-left:6px}
+.edge{position:absolute;top:0;bottom:0;width:4px;background:#000}
+body.right .edge{right:0} body.left .edge{left:0}
+.pill{width:40px;background:#111;border-radius:20px;display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:4px;position:relative}
+.pill.c{height:40px;padding:0;justify-content:center}
+.pill button{width:32px;height:30px;display:grid;place-items:center;color:#d6d6d6;border-radius:12px;position:relative;transition:background .15s,color .15s,transform .1s}
+.pill button:hover{background:#262626;color:#fff}
+.pill button:active{transform:scale(.92)}
+.pill button svg{width:18px;height:18px}
+.agents{padding:8px 0;gap:2px}
+.agents button{height:22px}
+.agents .st{transform:scale(1.3)}
+.badge{position:absolute;top:-2px;right:-3px;min-width:15px;height:15px;border-radius:8px;background:var(--amber);color:#111;font-size:9.5px;font-weight:700;display:grid;place-items:center;padding:0 3px}
+.mic.on{color:#fff!important;background:var(--red)!important;animation:pulse 1.2s infinite}
+.agents button.new{animation:pop .5s ease}
+@keyframes pop{0%{transform:scale(.4)}60%{transform:scale(1.2)}100%{transform:scale(1)}}
+</style></head>
+<body class="right">
+<div class="edge"></div>
+<div id="dock"></div>
+<script src="common.js"></script>
+<script>
+const { I } = R, el = document.getElementById("dock");
+var desk = window.desk;
+let talking = false, seen = new Set(), side = 'right';
+const face = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="12" rx="6"/><path d="M8 17l-1.5 3.5L11 17"/><circle cx="10" cy="11" r=".9" fill="currentColor"/><circle cx="14" cy="11" r=".9" fill="currentColor"/></svg>';
+function render(list) {
+  const need = list.filter(R.needs).length;
+  el.innerHTML = `
+    <div class="pill c"><button data-a="inbox" title="Inbox">${I.inbox}${need ? `<span class="badge">${need}</span>` : ''}</button></div>
+    ${list.length ? `<div class="pill agents">${list.map((s) => `<button data-sid="${s.id}" class="${seen.has(s.id) ? '' : 'new'}" title="${R.esc(R.title(s))} · ${s.status}"><span class="st ${s.status}"></span></button>`).join('')}</div>` : ''}
+    <div class="pill"><button data-a="list" title="Agents">${face}</button><button data-a="mic" class="mic ${talking ? 'on' : ''}" title="Talk (double-tap and hold Alt)">${I.mic}</button><button data-a="shot" title="Send a screenshot">${I.cam}</button></div>
+    <div class="pill c"><button data-a="settings" title="Settings">${I.more}</button></div>`;
+  list.forEach((s) => seen.add(s.id));
+  layout();
+}
+function layout() {
+  if (!desk) return;
+  const pills = [...el.querySelectorAll('.pill')].map((p) => { const r = p.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, r: 20 }; });
+  const h = el.getBoundingClientRect().height;
+  const ex = side === 'right' ? 52 : 0;
+  pills.push({ x: ex, y: 0, w: 4, h, r: 0 });
+  desk.dockLayout({ h, pills });
+}
+R.on(render);
+el.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.sid) return desk.toggle({ view: 'detail', sid: b.dataset.sid });
+  const a = b.dataset.a;
+  if (a === 'inbox') desk.toggle({ view: 'inbox' });
+  if (a === 'list') desk.toggle({ view: 'list' });
+  if (a === 'settings') desk.toggle({ view: 'settings' });
+  if (a === 'mic') desk.talk(!talking);
+  if (a === 'shot') desk.screenshot();
+});
+if (desk) {
+  desk.info().then((i) => { side = i.cfg.side; document.body.className = side; render(R.sessions); });
+  desk.on('cfg', (c) => { side = c.side; document.body.className = side; render(R.sessions); });
+  desk.on('dictation', ({ state }) => { talking = state === 'listening'; render(R.sessions); });
+}
+</script>
+</body></html>
