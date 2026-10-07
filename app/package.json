@@ -47,7 +47,8 @@
       "oneClick": true,
       "perMachine": false
     },
-    "publish": null
+    "publish": null,
+    "npmRebuild": false
   },
   "author": "OnlyTerp",
   "license": "MIT",
