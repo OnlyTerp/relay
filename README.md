@@ -23,11 +23,13 @@ It drives the official CLIs, so it works with **whatever subscriptions you alrea
 - **Inbox**: every question from every agent in one list. *"Nothing needs you. Suspiciously quiet."*
 - **Answer in a keystroke**: `Ctrl+Alt+K` jumps to whatever's waiting, `1`–`9` picks an option, `Enter` sends.
 - **Undo**: every answer waits a moment (configurable) before it's typed in. `Esc` takes it back.
-- **Press to talk**: double-tap and hold `Alt`, speak, let go. Offline Windows speech, no keys.
+- **Press to talk**: double-tap and hold `Alt`, speak, let go. Speech-to-text is [Whisper](https://huggingface.co/onnx-community/whisper-small) running on your own GPU (WebGPU, with a CPU fallback). Nothing is uploaded, no keys, about half a second per sentence.
+- **Start agents on any model**: pick a harness, a model from its live list (omp, Grok, OpenCode and Cursor list theirs; any id works for the rest), and a folder. Save combos as one-click presets.
+- **Two-minute setup**: a first-run guide finds your agent CLIs, connects them, downloads the voice model, and puts `relay` on your PATH.
 - **Screenshots to agents**: one click attaches your screen to the reply.
 - **See every agent**: grouped by project and machine, local or `ssh`'d VPS.
 - **Take it anywhere**: open Relay on your phone over Wi-Fi or through a private Cloudflare link, and add it to your home screen.
-- **Settings**: dock side and screen, hotkeys, undo window, notifications, sounds, start with Windows.
+- **Settings**: voice quality (Fast, Balanced or Best), dock side and screen, hotkeys, undo window, notifications, sounds, start with Windows.
 
 ## Supported agents
 
@@ -58,11 +60,21 @@ Needs Node.js 18+.
 ```
 git clone https://github.com/OnlyTerp/relay
 cd relay
-setup.bat     # installs the relay command + agent integrations
-start.bat     # launches the dock
+setup.bat     # installs everything
+start.bat     # launches Relay; the setup guide takes it from there
 ```
 
 Or grab `Relay Setup.exe` from [Releases](https://github.com/OnlyTerp/relay/releases) and run `npm i -g ./cli && relay install` once.
+
+## Voice models
+
+| Quality | Model | Download | Notes |
+|---|---|---|---|
+| Fast | `onnx-community/whisper-base` | ~150 MB | fine on any PC |
+| Balanced (default) | `onnx-community/whisper-small` | ~500 MB | accurate, fast on a GPU |
+| Best | `onnx-community/whisper-large-v3-turbo` | ~1 GB | needs a GPU |
+
+Models download once from Hugging Face and run locally through [transformers.js](https://github.com/huggingface/transformers.js).
 
 ## Remote machines
 

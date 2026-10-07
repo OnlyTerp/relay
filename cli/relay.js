@@ -88,7 +88,7 @@ const readStdin = () => new Promise((r) => { let s = ''; process.stdin.on('data'
 async function hookMain([kind, ...extra]) {
   if (kind === 'claude') {
     // Claude Code and Grok (Grok reads ~/.claude/settings.json hooks; it adds camelCase fields)
-    let p; try { p = JSON.parse(await readStdin()); } catch { return; }
+    let p; try { p = JSON.parse((await readStdin()).replace(/^\uFEFF/, '').trim()); } catch { return; }
     const grok = 'hookEventName' in p || 'workspaceRoot' in p || 'lastAssistantMessage' in p;
     const agent = process.env.RELAY_AGENT || (grok ? 'grok' : 'claude');
     const sessionId = p.session_id || p.sessionId || '';
@@ -150,7 +150,9 @@ function lastAssistant(file) {
 // ---------------------------------------------------------------- install
 function install() {
   const node = process.execPath;
-  const hookCmd = (k) => `"${node}" "${SELF}" hook ${k}`;
+  // `node "<path>" hook x` parses the same in PowerShell (Grok), cmd and bash (Claude Code).
+  const fwd = SELF.replace(/\\/g, '/');
+  const hookCmd = (k) => `node "${fwd}" hook ${k}`;
 
   // Claude Code: ~/.claude/settings.json
   const cdir = path.join(os.homedir(), '.claude');

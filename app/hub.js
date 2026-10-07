@@ -34,7 +34,7 @@ const strip = (s) => s
   .replace(/\x1b[=>78]/g, '')
   .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mjs': 'text/javascript' };
 
 const short = (t) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > 48 ? t.slice(0, 46).trimEnd() + '…' : t; };
 
@@ -80,7 +80,10 @@ function startHub({ port = 7777, lan = false, uiDir = path.join(__dirname, 'ui')
     if (init.cwd) s.project = path.basename(init.cwd.replace(/[\\/]+$/, ''));
     return s;
   }
-  const set = (s, patch) => { Object.assign(s, patch, { updatedAt: now() }); broadcast(); };
+  const set = (s, patch) => {
+    if (patch.status && patch.status !== s.status) patch.since = now();
+    Object.assign(s, patch, { updatedAt: now() }); broadcast();
+  };
   const needsYou = (s) => s.status === 'question' || s.status === 'waiting';
 
   function sendKeys(id, seq) {
@@ -187,6 +190,14 @@ function startHub({ port = 7777, lan = false, uiDir = path.join(__dirname, 'ui')
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(snapshot()));
     }
+    if (u.pathname.startsWith('/vendor/')) {
+      const dist = path.join(__dirname, 'node_modules', '@huggingface', 'transformers', 'dist');
+      const name = u.pathname === '/vendor/transformers.js' ? 'transformers.min.js' : path.basename(u.pathname);
+      const vf = path.join(dist, name);
+      if (!fs.existsSync(vf)) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'content-type': name.endsWith('.wasm') ? 'application/wasm' : 'text/javascript', 'cache-control': 'no-cache' });
+      return fs.createReadStream(vf).pipe(res);
+    }
     let p = u.pathname === '/' ? '/index.html' : u.pathname === '/dock' ? '/dock.html' : u.pathname;
     const f = path.join(uiDir, path.normalize(p).replace(/^([/\\])+/, ''));
     if (!f.startsWith(uiDir) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
@@ -211,7 +222,10 @@ function startHub({ port = 7777, lan = false, uiDir = path.join(__dirname, 'ui')
       if (m.t === 'hello') {
         id = m.id; agents.set(id, ws);
         const s = ensure(id, m);
-        set(s, { status: 'idle', exited: false, title: s.title || m.title || '' });
+        const a = m.args || [];
+        const mi = a.findIndex((x) => x === '--model' || x === '-m');
+        const model = mi >= 0 ? a[mi + 1] : (a.find((x) => x.startsWith('--model=')) || '').slice(8);
+        set(s, { status: 'idle', exited: false, title: s.title || m.title || '', model: model || s.model || '' });
       } else if (!id) {
         return;
       } else if (m.t === 'out') {

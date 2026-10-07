@@ -1,10 +1,12 @@
 // Relay desktop (Windows): floating edge dock + panel, settings, hotkeys, push-to-talk, screenshots, phone access, tray.
-const { app, BrowserWindow, screen, ipcMain, globalShortcut, Tray, Menu, nativeImage, desktopCapturer, shell, Notification } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, globalShortcut, Tray, Menu, nativeImage, desktopCapturer, shell, Notification, dialog, session } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { spawn, execFile } = require('child_process');
 const { startHub, loadConfig, saveConfig } = require('./hub');
+const agents = require('./agents');
+const cliDir = () => (app.isPackaged ? path.join(process.resourcesPath, 'cli') : path.join(__dirname, '..', 'cli'));
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('app.relay.desktop');
@@ -15,14 +17,16 @@ const DEFAULTS = {
   hotkeys: { answer: 'Control+Alt+K', talk: 'Control+Alt+Space', list: 'Control+Alt+O' },
   doubleAltTalk: true, autoSendVoice: true,
   lan: false, tunnel: false, port: 7777,
+  voice: { level: 'balanced', language: 'english' },
+  onboarded: false, recentFolders: [], lastModel: {}, lastHarness: 'omp', presets: [],
 };
 const DOCK_W = 56;
-const PANEL_W = 400, PANEL_H = 560;
+const PANEL_W = 420, PANEL_H = 600;
 
 let hub, dock, panel, tray, cfg, tunnel = { proc: null, url: '', state: 'off', error: '' };
 let talking = null, lastSid = null, uio = null;
 
-const merge = (a, b) => ({ ...a, ...b, hotkeys: { ...a.hotkeys, ...(b.hotkeys || {}) } });
+const merge = (a, b) => ({ ...a, ...b, hotkeys: { ...a.hotkeys, ...(b.hotkeys || {}) }, voice: { ...a.voice, ...(b.voice || {}) } });
 const base = (p) => `http://127.0.0.1:${hub.port}${p}${p.includes('?') ? '&' : '?'}token=${hub.token}`;
 
 // ---------------------------------------------------------------- placement
@@ -97,30 +101,20 @@ function openPanel(view = 'list', sid = null) {
 function togglePanel(view, sid) { panel.isVisible() && !sid ? panel.hide() : openPanel(view, sid); }
 const topNeed = () => { const n = hub.needsYou(); return n.length ? n[0].id : null; };
 
-// ---------------------------------------------------------------- push to talk (offline Windows speech)
-const PS_DICTATE = `
-Add-Type -AssemblyName System.Speech
-$r = New-Object System.Speech.Recognition.SpeechRecognitionEngine
-$r.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar))
-$r.SetInputToDefaultAudioDevice()
-while ($true) { $res = $r.Recognize([TimeSpan]::FromSeconds(30)); if ($res) { [Console]::Out.WriteLine($res.Text); [Console]::Out.Flush() } }
-`;
+// ---------------------------------------------------------------- push to talk (local Whisper runs in the panel)
 function talkStart(sid) {
   if (talking) return;
   sid = sid || topNeed() || lastSid;
+  talking = { sid, at: Date.now() };
   openPanel(sid ? 'detail' : 'list', sid);
-  const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PS_DICTATE], { windowsHide: true });
-  talking = { p, text: '' };
-  const send = (d) => { panel.webContents.send('dictation', d); dock.webContents.send('dictation', d); };
-  send({ state: 'listening', text: '' });
-  p.stdout.on('data', (d) => { if (!talking) return; talking.text += (talking.text ? ' ' : '') + d.toString().trim(); send({ state: 'listening', text: talking.text }); });
-  p.on('error', () => send({ state: 'error', text: '' }));
-  talking.send = send;
+  panel.webContents.send('voice', { cmd: 'start', sid });
+  dock.webContents.send('dictation', { state: 'listening' });
 }
 function talkStop() {
   if (!talking) return;
-  const t = talking;
-  setTimeout(() => { try { t.p.kill(); } catch {} talking = null; t.send({ state: 'done', text: t.text, autoSend: cfg.autoSendVoice }); }, 900);
+  talking = null;
+  panel.webContents.send('voice', { cmd: 'stop', autoSend: cfg.autoSendVoice });
+  dock.webContents.send('dictation', { state: 'done' });
 }
 function setupDoubleAlt() {
   if (uio || !cfg.doubleAltTalk) return;
@@ -235,11 +229,33 @@ ipcMain.handle('info', () => info());
 ipcMain.handle('set', (_e, patch) => { applySettings(patch); return info(); });
 ipcMain.handle('check-hotkey', (_e, k) => { try { const ok = globalShortcut.isRegistered(k) || (globalShortcut.register(k, () => {}) && (globalShortcut.unregister(k), true)); return ok; } catch { return false; } });
 ipcMain.handle('install-hooks', () => new Promise((res) => {
-  const cliDir = app.isPackaged ? path.join(process.resourcesPath, 'cli') : path.join(__dirname, '..', 'cli');
-  execFile(process.execPath, [path.join(cliDir, 'relay.js'), 'install'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+  agents.ensureShim(cliDir()).catch(() => {});
+  execFile(process.execPath, [path.join(cliDir(), 'relay.js'), 'install'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
     (err, out, errOut) => { res((out || '') + (errOut || '') + (err ? '\n' + err.message : '')); pushInfo(); });
 }));
 ipcMain.on('open-external', (_e, u) => shell.openExternal(u));
+ipcMain.on('voice-state', (_e, st) => { if (st === 'idle' && talking) talking = null; dock.webContents.send('dictation', { state: st }); });
+ipcMain.handle('agents', (_e, force) => agents.detect(force));
+ipcMain.handle('models', (_e, id, refresh) => agents.models(id, refresh));
+ipcMain.handle('pick-folder', async () => {
+  const r = await dialog.showOpenDialog(panel, { properties: ['openDirectory'], defaultPath: cfg.recentFolders[0] || os.homedir() });
+  return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('launch', async (_e, opts) => {
+  try {
+    const r = await agents.launch(opts, cliDir());
+    const folders = [opts.cwd, ...cfg.recentFolders.filter((f) => f !== opts.cwd)].slice(0, 8);
+    applySettings({ recentFolders: folders, lastHarness: opts.harness, lastModel: { ...cfg.lastModel, [opts.harness]: opts.model || '' } });
+    return r;
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('setup', async () => {
+  const shim = await agents.ensureShim(cliDir()).catch((e) => ({ ok: false, error: e.message }));
+  const out = await new Promise((res) => execFile(process.execPath, [path.join(cliDir(), 'relay.js'), 'install'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+    (err, o, e2) => res((o || '') + (e2 || '') + (err ? '\n' + err.message : ''))));
+  pushInfo();
+  return { shim, out };
+});
 ipcMain.on('quit', () => app.quit());
 
 // ---------------------------------------------------------------- notifications
@@ -263,7 +279,11 @@ app.whenReady().then(() => {
   cfg = merge(DEFAULTS, loadConfig());
   hub = startHub({ port: cfg.port, lan: !!cfg.lan, uiDir: path.join(__dirname, 'ui'), undoMs: cfg.undoMs });
   hub.onChange(watchNeeds);
+  const ours = (u) => { try { return new URL(u).host === `127.0.0.1:${hub.port}`; } catch { return false; } };
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb, d) => cb(['media', 'audioCapture', 'clipboard-sanitized-write'].includes(perm) && ours(d.requestingUrl || wc.getURL())));
+  session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => ['media', 'audioCapture'].includes(perm) && ours(origin));
   createDock(); createPanel();
+  if (!cfg.onboarded) panel.webContents.once('did-finish-load', () => setTimeout(() => openPanel('welcome'), 600));
   registerHotkeys();
   setupDoubleAlt();
   if (cfg.tunnel) tunnelStart();
@@ -274,6 +294,7 @@ app.whenReady().then(() => {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Relay', click: () => openPanel('list') },
     { label: 'Inbox', click: () => openPanel('inbox') },
+    { label: 'New agent', click: () => openPanel('new') },
     { label: 'Settings', click: () => openPanel('settings') },
     { label: 'Show / hide dock', click: () => (dock.isVisible() ? dock.hide() : dock.showInactive()) },
     { type: 'separator' },
