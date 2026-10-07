@@ -207,7 +207,11 @@ ipcMain.on('toggle', (_e, a = {}) => togglePanel(a.view, a.sid));
 ipcMain.on('open', (_e, a = {}) => openPanel(a.view, a.sid));
 ipcMain.on('hide', () => panel.hide());
 ipcMain.on('focus-sid', (_e, sid) => { lastSid = sid; });
+let lastLayout = '';
 ipcMain.on('dock-layout', (_e, { h, pills }) => {
+  const sig = JSON.stringify([Math.round(h), pills.map((p) => [Math.round(p.x), Math.round(p.y), Math.round(p.w), Math.round(p.h)])]);
+  if (sig === lastLayout) return; // nothing moved: don't touch the window (prevents flicker)
+  lastLayout = sig;
   dockH = Math.max(80, Math.round(h));
   placeDock();
   shapeWin(dock, pills);
@@ -259,18 +263,22 @@ ipcMain.handle('setup', async () => {
 ipcMain.on('quit', () => app.quit());
 
 // ---------------------------------------------------------------- notifications
-const notified = new Set();
+// One notification per "needs you" episode per agent, never more than one every 8 seconds overall.
+const notified = new Map();
+let lastToast = 0;
 function watchNeeds(list) {
+  const t = Date.now();
   for (const s of list) {
     const need = s.status === 'question' || s.status === 'waiting';
-    if (need && s.unread && !notified.has(s.id) && !panel.isVisible() && cfg.notifications && Notification.isSupported()) {
-      notified.add(s.id);
-      const q = s.question && s.question.items[s.question.index];
-      const n = new Notification({ title: s.title || s.project || s.agent, body: q ? q.text : (s.note || 'Waiting for you'), silent: !cfg.sounds });
-      n.on('click', () => openPanel('detail', s.id));
-      n.show();
-    }
-    if (!need) notified.delete(s.id);
+    if (!need) { if (notified.has(s.id) && t - notified.get(s.id) > 20000) notified.delete(s.id); continue; }
+    if (notified.has(s.id) || !s.unread || panel.isVisible() || !cfg.notifications || !Notification.isSupported()) continue;
+    notified.set(s.id, t);
+    if (t - lastToast < 8000) continue;
+    lastToast = t;
+    const q = s.question && s.question.items[s.question.index];
+    const n = new Notification({ title: s.title || s.project || s.agent, body: q ? q.text : (s.note || 'Waiting for you'), silent: !cfg.sounds });
+    n.on('click', () => openPanel('detail', s.id));
+    n.show();
   }
 }
 
@@ -283,6 +291,16 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((wc, perm, cb, d) => cb(['media', 'audioCapture', 'clipboard-sanitized-write'].includes(perm) && ours(d.requestingUrl || wc.getURL())));
   session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => ['media', 'audioCapture'].includes(perm) && ours(origin));
   createDock(); createPanel();
+  // If a window's renderer dies, recreate it once rather than leaving a broken or looping window.
+  for (const [name, make] of [['dock', createDock], ['panel', createPanel]]) {
+    let restarts = 0;
+    const watch = (w) => w.webContents.on('render-process-gone', () => {
+      if (++restarts > 2) return;
+      try { w.destroy(); } catch {}
+      make(); watch(name === 'dock' ? dock : panel);
+    });
+    watch(name === 'dock' ? dock : panel);
+  }
   if (!cfg.onboarded) panel.webContents.once('did-finish-load', () => setTimeout(() => openPanel('welcome'), 600));
   registerHotkeys();
   setupDoubleAlt();

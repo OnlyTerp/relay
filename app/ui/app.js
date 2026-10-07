@@ -11,6 +11,7 @@ const L = { harnesses: null, harness: null, models: {}, modelsSrc: {}, model: ''
 
 const hostLabel = (s) => (/^(localhost|)$/.test(s.host) ? 'this pc' : s.host);
 const shortModel = (m) => (m || '').split('/').pop();
+const agoSpan = (t) => `<span data-ago="${t || 0}">${ago(t)}</span>`;
 const ago = (t) => { if (!t) return ''; const s = Math.max(0, (Date.now() - t) / 1000); return s < 60 ? `${Math.floor(s)}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`; };
 const P = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const IC = {
@@ -51,11 +52,11 @@ function vList(list) {
 }
 function row(s, i) {
   const q = s.question ? s.question.items.length : 0;
-  const meta = s.status === 'working' ? ago(s.since) : shortModel(s.model);
+  const meta = s.status === 'working' ? agoSpan(s.since) : esc(shortModel(s.model));
   return `<div class="row ${i === sel ? 'sel' : ''} ${s.status}" data-open="${s.id}">
     <span class="st ${s.status}"></span>${agentBadge(s.agent)}
     <span class="t">${esc(title(s))}${q > 1 ? `<span class="sub">⑂ ${q}</span>` : ''}</span>
-    ${meta ? `<span class="rm">${esc(meta)}</span>` : ''}
+    ${meta ? `<span class="rm">${meta}</span>` : ''}
     <span class="acts">${desk && s.live ? `<button class="ib" data-talk="${s.id}" title="Talk">${I.mic}</button>` : ''}<button class="ib" data-dismiss="${s.id}" title="${s.exited ? 'Remove' : 'Dismiss'}">${I.x}</button></span>
   </div>`;
 }
@@ -85,7 +86,7 @@ function vDetail(s) {
   if (s.prompt) th += `<div class="b me">${esc(s.prompt)}</div>`;
   if (s.reply) th += `<div class="b ai">${esc(s.reply)}</div>`;
   else if (s.status !== 'working' && s.tail && !q) th += `<div class="b ai term">${esc(cleanTail(s.tail))}</div>`;
-  if (s.status === 'working') th += `<div class="b note working"><span class="st working"></span> working · ${ago(s.since)}</div>`;
+  if (s.status === 'working') th += `<div class="b note working"><span class="st working"></span> working · ${agoSpan(s.since)}</div>`;
   if (s.note) th += `<div class="b note">${esc(s.note)}</div>`;
   if (q) {
     th += `<div class="qwrap">${q.header || s.question.items.length > 1 ? `<div class="qh">${esc(q.header.replace(/_/g, ' '))}${s.question.items.length > 1 ? ` · ${s.question.index + 1} of ${s.question.items.length}` : ''}</div>` : ''}<div class="q">${esc(q.text)}</div><div class="opts">`;
@@ -292,10 +293,10 @@ function qr(url) { try { const g = qrcode(0, 'M'); g.addData(url); g.make(); ret
 // ---------------------------------------------------------------- render
 function key(list) {
   const s = list.find((x) => x.id === sid);
-  return JSON.stringify([view, sel, attach.length, toast && toast.msg, voice.state, Math.round(voice.progress * 50), view === 'detail' && voice.state === 'recording' ? Math.round(voice.level * 8) + (Date.now() >> 7) : 0,
+  return JSON.stringify([view, sel, attach.length, toast && toast.msg, voice.state, Math.round(voice.progress * 50), 
     ['settings', 'welcome', 'new', 'list'].includes(view) ? [inf, L.step, L.setup, L.harness, L.model, L.modelQ, L.folder, L.busy, L.err, L.modelsSrc, L.harnesses && L.harnesses.length, L.testText] : 0,
-    list.map((x) => [x.id, x.status, x.title, x.project, x.live, x.exited, x.question, x.pending && x.pending.at, x.model, x.status === 'working' ? ago(x.since) : 0]),
-    s && [s.prompt, s.reply, s.note, view === 'detail' && !s.reply && s.status !== 'working' ? s.tail : 0, ago(s.since)]]);
+    list.map((x) => [x.id, x.status, x.title, x.project, x.live, x.exited, x.question, x.pending && x.pending.at, x.model, x.status === 'working' ? x.since : 0]),
+    s && [s.prompt, s.reply, s.note, view === 'detail' && !s.reply && s.status !== 'working' ? s.tail : 0, s.since]]);
 }
 function render() {
   const list = R.sessions;
@@ -317,7 +318,7 @@ function render() {
   const th = document.getElementById('thread'); if (th) th.scrollTop = th.scrollHeight;
 }
 R.on(render);
-setInterval(() => { if (view === 'list' || view === 'detail') render(); }, 1000);
+setInterval(() => { for (const el of document.querySelectorAll('[data-ago]')) { const v = ago(+el.dataset.ago); if (el.textContent !== v) el.textContent = v; } }, 1000);
 
 // ---------------------------------------------------------------- actions
 const cur = () => R.sessions.find((s) => s.id === sid);
@@ -449,7 +450,15 @@ document.addEventListener('keydown', (e) => {
 
 // ---------------------------------------------------------------- boot
 if (desk) {
-  Voice.on((st) => { voice = st; if (['welcome', 'settings', 'detail'].includes(view)) render(); });
+  Voice.on((st) => {
+    const prev = voice.state; voice = st;
+    if (st.state === 'recording' && prev === 'recording') { // only move the level bars
+      const bars = document.querySelectorAll('.voicebar .lv i');
+      bars.forEach((b, i) => { b.style.height = `${4 + Math.round(Math.max(0.08, st.level) * 22 * (0.55 + 0.45 * Math.sin(i * 1.7 + Date.now() / 120)))}px`; });
+      return;
+    }
+    if (['welcome', 'settings', 'detail'].includes(view)) render();
+  });
   desk.info().then((i) => {
     inf = i;
     Voice.configure(i.cfg.voice);

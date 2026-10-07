@@ -30,8 +30,12 @@ const { I } = R, el = document.getElementById("dock");
 var desk = window.desk;
 let talking = false, seen = new Set(), side = 'right';
 const face = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="12" rx="6"/><path d="M8 17l-1.5 3.5L11 17"/><circle cx="10" cy="11" r=".9" fill="currentColor"/><circle cx="14" cy="11" r=".9" fill="currentColor"/></svg>';
+let lastSig = '';
 function render(list) {
   const need = list.filter(R.needs).length;
+  const sig = JSON.stringify([side, talking, need, list.map((s) => [s.id, s.status, R.title(s)])]);
+  if (sig === lastSig) return; // nothing visible changed
+  lastSig = sig;
   el.innerHTML = `
     <div class="pill c"><button data-a="inbox" title="Inbox">${I.inbox}${need ? `<span class="badge">${need}</span>` : ''}</button></div>
     ${list.length ? `<div class="pill agents">${list.map((s) => `<button data-sid="${s.id}" class="${seen.has(s.id) ? '' : 'new'}" title="${R.esc(R.title(s))} · ${s.status}"><span class="st ${s.status}"></span></button>`).join('')}</div>` : ''}
@@ -60,9 +64,9 @@ el.addEventListener('click', (e) => {
   if (a === 'shot') desk.screenshot();
 });
 if (desk) {
-  desk.info().then((i) => { side = i.cfg.side; document.body.className = side; render(R.sessions); });
-  desk.on('cfg', (c) => { side = c.side; document.body.className = side; render(R.sessions); });
-  desk.on('dictation', ({ state }) => { talking = state === 'listening'; render(R.sessions); });
+  desk.info().then((i) => { side = i.cfg.side; document.body.className = side; lastSig = ''; render(R.sessions); });
+  desk.on('cfg', (c) => { side = c.side; document.body.className = side; lastSig = ''; render(R.sessions); });
+  desk.on('dictation', ({ state }) => { const t = state === 'listening'; if (t !== talking) { talking = t; render(R.sessions); } });
 }
 </script>
 </body></html>

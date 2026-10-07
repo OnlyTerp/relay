@@ -85,7 +85,11 @@ function relayCommand(cliDir) {
   // Prefer system node; fall back to Electron-as-node (installer users may not have node on PATH).
   return { node: process.env.RELAY_NODE || 'node', script: path.join(cliDir, 'relay.js') };
 }
+let lastLaunch = { key: '', at: 0 };
 async function launch({ harness, model, cwd, prompt, title }, cliDir) {
+  const k = JSON.stringify([harness, model, cwd, prompt]);
+  if (k === lastLaunch.key && Date.now() - lastLaunch.at < 5000) return { ok: true, deduped: true };
+  lastLaunch = { key: k, at: Date.now() };
   const h = HARNESSES.find((x) => x.id === harness);
   if (!h) throw new Error('Unknown harness');
   if (!cwd || !fs.existsSync(cwd)) throw new Error('Pick a folder that exists');
@@ -117,7 +121,8 @@ async function ensureShim(cliDir) {
   const bin = path.join(HOME, 'bin');
   fs.mkdirSync(bin, { recursive: true });
   const script = path.join(cliDir, 'relay.js');
-  const shim = `@echo off\r\nwhere node >nul 2>nul && (node "${script}" %*) || (set ELECTRON_RUN_AS_NODE=1&& "${process.execPath}" "${script}" %*)\r\n`;
+  // if/else, not && ||: an agent that exits with an error must not be started a second time.
+  const shim = `@echo off\r\nwhere node >nul 2>nul\r\nif %errorlevel%==0 (\r\n  node "${script}" %*\r\n) else (\r\n  set ELECTRON_RUN_AS_NODE=1\r\n  "${process.execPath}" "${script}" %*\r\n)\r\n`;
   fs.writeFileSync(path.join(bin, 'relay.cmd'), shim);
   const ps = `$p=[Environment]::GetEnvironmentVariable('Path','User'); if(-not $p){$p=''}; if(($p -split ';') -notcontains '${bin}'){[Environment]::SetEnvironmentVariable('Path', ($p.TrimEnd(';')+';${bin}').TrimStart(';'), 'User'); 'added'} else {'present'}`;
   const r = await run('powershell.exe', ['-NoProfile', '-Command', ps], 15000);

@@ -55,15 +55,23 @@ function startHub({ port = 7777, lan = false, uiDir = path.join(__dirname, 'ui')
   const snapshot = () => [...sessions.values()].sort((a, b) => a.startedAt - b.startedAt).map(pub);
 
   let bTimer = null;
-  function broadcast() {
-    if (bTimer) return;
+  // Coalesced broadcasts. Terminal output only refreshes the tail (at most once a second);
+  // real state changes go out within 80ms.
+  let lastMsg = '';
+  function broadcast(delay = 80) {
+    if (bTimer) { if (delay >= bDelay) return; clearTimeout(bTimer); }
+    bDelay = delay;
     bTimer = setTimeout(() => {
       bTimer = null;
-      const msg = JSON.stringify({ t: 'state', sessions: snapshot() });
+      const snap = snapshot();
+      const msg = JSON.stringify({ t: 'state', sessions: snap });
+      if (msg === lastMsg) return;
+      lastMsg = msg;
       for (const u of uis) if (u.readyState === 1) u.send(msg);
-      for (const l of listeners) l(snapshot());
-    }, 80);
+      for (const l of listeners) l(snap);
+    }, delay);
   }
+  let bDelay = 80;
 
   function ensure(id, init = {}) {
     let s = sessions.get(id);
@@ -165,7 +173,7 @@ function startHub({ port = 7777, lan = false, uiDir = path.join(__dirname, 'ui')
   // idle heuristic for agents without hooks (opencode, others)
   setInterval(() => {
     for (const s of sessions.values()) {
-      if (s.status === 'working' && agents.has(s.id) && s.lastOut && now() - s.lastOut > IDLE_MS) {
+      if (!s.hooked && s.status === 'working' && agents.has(s.id) && s.lastOut && now() - s.lastOut > IDLE_MS) {
         set(s, { status: 'waiting', reply: s.hooked ? s.reply : (s.reply || lastLines(s.tail)), unread: true });
       }
     }
@@ -233,8 +241,9 @@ function startHub({ port = 7777, lan = false, uiDir = path.join(__dirname, 'ui')
         s.tail = (s.tail + strip(m.d)).slice(-6000);
         const big = m.d.length > 160;
         s.lastOut = now();
-        if (big && s.status !== 'working' && s.status !== 'question' && !s.pending && (s.kick || 0) > now() - 15000) set(s, { status: 'working' });
-        else broadcast();
+        // Hooked agents (omp, Claude, Grok, Codex) report their own state; never guess it from screen redraws.
+        if (!s.hooked && big && s.status !== 'working' && s.status !== 'question' && !s.pending && (s.kick || 0) > now() - 15000) set(s, { status: 'working' });
+        else broadcast(1000);
       } else if (m.t === 'in') { // user pressed Enter in their own terminal
         const s = sessions.get(id); if (!s) return;
         s.kick = now();
