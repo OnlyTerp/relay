@@ -1,7 +1,7 @@
 {
   "name": "relay-desktop",
   "productName": "Relay",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Never keep an agent waiting. Edge dock for Claude Code, Codex and OpenCode on Windows.",
   "main": "main.js",
   "scripts": {

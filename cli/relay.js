@@ -37,7 +37,19 @@ function run(agent, args) {
   const env = { ...process.env, RELAY_SID: id, RELAY_HUB: HUB, RELAY_TOKEN: token(), RELAY_AGENT: path.basename(agent).replace(/\.(cmd|exe|bat|ps1)$/i, '') };
   const cols = process.stdout.columns || 120, rows = process.stdout.rows || 32;
   const win = process.platform === 'win32';
-  const term = pty.spawn(win ? (process.env.COMSPEC || 'cmd.exe') : agent, win ? ['/d', '/s', '/c', [agent, ...args].map(q).join(' ')] : args,
+  let file = agent, argv = args;
+  if (win) {
+    // Resolve the agent. A real .exe is started directly, so every argument arrives exactly as given.
+    // A .cmd/.bat shim (npm installs) must go through cmd.exe: build the command line with cmd's own
+    // quoting ("" inside quotes) and hand it to node-pty as a pre-escaped string so nothing re-quotes it.
+    const found = whichWin(agent);
+    if (found && /\.exe$/i.test(found)) { file = found; argv = args; }
+    else {
+      file = process.env.COMSPEC || 'cmd.exe';
+      argv = `/d /s /c "${[found ? cmdQuote(found, true) : agent, ...args.map((a) => cmdQuote(a))].join(' ')}"`;
+    }
+  }
+  const term = pty.spawn(file, argv,
     { name: 'xterm-256color', cols, rows, cwd: process.cwd(), env, useConpty: true });
 
   // hub link (reconnects; agent keeps working if Relay is closed)
@@ -71,7 +83,16 @@ function run(agent, args) {
   process.stdin.on('data', (d) => { term.write(d.toString('utf8')); if (d.includes(13)) send({ t: 'in' }); });
   process.stdout.on('resize', () => term.resize(process.stdout.columns, process.stdout.rows));
 }
-const q = (a) => (/[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);
+// cmd.exe quoting: wrap in double quotes and double any inner quote. Never backslash-escape for cmd.
+const cmdQuote = (a, force = false) => (force || a === '' || /[\s"&|<>^()%!,;=]/.test(a) ? `"${String(a).replace(/"/g, '""')}"` : a);
+function whichWin(cmd) {
+  if (/[\\/]/.test(cmd) && fs.existsSync(cmd)) return cmd;
+  try {
+    const out = require('child_process').execFileSync('where', [cmd], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const hits = out.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    return hits.find((h) => /\.exe$/i.test(h)) || hits.find((h) => /\.(cmd|bat)$/i.test(h)) || null;
+  } catch { return null; }
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- hooks
